@@ -14,6 +14,7 @@
 
 #include <zephyr/logging/log.h>
 
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/led_strip.h>
 #include <drivers/ext_power.h>
 
@@ -59,6 +60,15 @@ struct rgb_underglow_state {
     uint16_t animation_step;
     bool on;
 };
+
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+
+static const struct gpio_dt_spec supply_gpios[] = {
+    DT_FOREACH_PROP_ELEM_SEP(STRIP_CHOSEN, supply_gpios, GPIO_DT_SPEC_GET_BY_IDX, (, ))};
+
+static const size_t supply_gpios_count = DT_PROP_LEN(STRIP_CHOSEN, supply_gpios);
+
+#endif
 
 static const struct device *led_strip;
 
@@ -253,6 +263,15 @@ static int zmk_rgb_underglow_init(void) {
     }
 #endif
 
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+    for (int i = 0; i < supply_gpios_count; i++) {
+        if (gpio_pin_configure_dt(&supply_gpios[i], GPIO_OUTPUT_INACTIVE)) {
+            LOG_ERR("Failed to configure rgb power supply pin %d", i);
+            return -EIO;
+        }
+    }
+#endif
+
     state = (struct rgb_underglow_state){
         color : {
             h : CONFIG_ZMK_RGB_UNDERGLOW_HUE_START,
@@ -310,6 +329,14 @@ int zmk_rgb_underglow_on(void) {
     }
 #endif
 
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+    for (int i = 0; i < supply_gpios_count; i++) {
+        if (gpio_pin_set_dt(&supply_gpios[i], 1)) {
+            LOG_ERR("Failed to set rgb power supply pin %d", i);
+        }
+    }
+#endif
+
     state.on = true;
     state.animation_step = 0;
     k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
@@ -336,6 +363,14 @@ int zmk_rgb_underglow_off(void) {
         int rc = ext_power_disable(ext_power);
         if (rc != 0) {
             LOG_ERR("Unable to disable EXT_POWER: %d", rc);
+        }
+    }
+#endif
+
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+    for (int i = 0; i < supply_gpios_count; i++) {
+        if (gpio_pin_set_dt(&supply_gpios[i], 0)) {
+            LOG_ERR("Failed to clear rgb power supply pin %d", i);
         }
     }
 #endif
