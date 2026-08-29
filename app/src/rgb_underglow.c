@@ -219,6 +219,24 @@ static void zmk_rgb_underglow_tick_handler(struct k_timer *timer) {
 
 K_TIMER_DEFINE(underglow_tick, zmk_rgb_underglow_tick_handler, NULL);
 
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+static void rgb_underglow_supply_on(void) {
+    for (int i = 0; i < supply_gpios_count; i++) {
+        if (gpio_pin_set_dt(&supply_gpios[i], 1)) {
+            LOG_ERR("Failed to enable rgb power supply pin %d", i);
+        }
+    }
+}
+
+void rgb_underglow_supply_off(void) {
+    for (int i = 0; i < supply_gpios_count; i++) {
+        if (gpio_pin_set_dt(&supply_gpios[i], 0)) {
+            LOG_ERR("Failed to disable rgb power supply pin %d", i);
+        }
+    }
+}
+#endif
+
 #if IS_ENABLED(CONFIG_SETTINGS)
 static int rgb_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     const char *next;
@@ -232,7 +250,14 @@ static int rgb_settings_set(const char *name, size_t len, settings_read_cb read_
         rc = read_cb(cb_arg, &state, sizeof(state));
         if (rc >= 0) {
             if (state.on) {
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+                rgb_underglow_supply_on();
+#endif
                 k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
+            } else {
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+                rgb_underglow_supply_off();
+#endif
             }
 
             return 0;
@@ -330,11 +355,7 @@ int zmk_rgb_underglow_on(void) {
 #endif
 
 #if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
-    for (int i = 0; i < supply_gpios_count; i++) {
-        if (gpio_pin_set_dt(&supply_gpios[i], 1)) {
-            LOG_ERR("Failed to set rgb power supply pin %d", i);
-        }
-    }
+    rgb_underglow_supply_on();
 #endif
 
     state.on = true;
@@ -368,11 +389,7 @@ int zmk_rgb_underglow_off(void) {
 #endif
 
 #if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
-    for (int i = 0; i < supply_gpios_count; i++) {
-        if (gpio_pin_set_dt(&supply_gpios[i], 0)) {
-            LOG_ERR("Failed to clear rgb power supply pin %d", i);
-        }
-    }
+    rgb_underglow_supply_off();
 #endif
 
     k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
