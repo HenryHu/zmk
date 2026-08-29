@@ -288,15 +288,6 @@ static int zmk_rgb_underglow_init(void) {
     }
 #endif
 
-#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
-    for (int i = 0; i < supply_gpios_count; i++) {
-        if (gpio_pin_configure_dt(&supply_gpios[i], GPIO_OUTPUT_INACTIVE)) {
-            LOG_ERR("Failed to configure rgb power supply pin %d", i);
-            return -EIO;
-        }
-    }
-#endif
-
     state = (struct rgb_underglow_state){
         color : {
             h : CONFIG_ZMK_RGB_UNDERGLOW_HUE_START,
@@ -320,6 +311,16 @@ static int zmk_rgb_underglow_init(void) {
     if (state.on) {
         k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
     }
+
+#if DT_NODE_HAS_PROP(STRIP_CHOSEN, supply_gpios)
+    gpio_flags_t supply_status = state.on ? GPIO_OUTPUT_ACTIVE : GPIO_OUTPUT_INACTIVE;
+    for (int i = 0; i < supply_gpios_count; i++) {
+        if (gpio_pin_configure_dt(&supply_gpios[i], supply_status)) {
+            LOG_ERR("Failed to configure rgb power supply pin %d", i);
+            return -EIO;
+        }
+    }
+#endif
 
     return 0;
 }
