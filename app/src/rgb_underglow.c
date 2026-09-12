@@ -8,6 +8,7 @@
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/random/random.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -50,6 +51,9 @@ enum rgb_underglow_effect {
     UNDERGLOW_EFFECT_BREATHE,
     UNDERGLOW_EFFECT_SPECTRUM,
     UNDERGLOW_EFFECT_SWIRL,
+    UNDERGLOW_EFFECT_STEPPER,
+    UNDERGLOW_EFFECT_NEON,
+    UNDERGLOW_EFFECT_STARLIGHT,
     UNDERGLOW_EFFECT_NUMBER // Used to track number of underglow effects
 };
 
@@ -185,6 +189,144 @@ static void zmk_rgb_underglow_effect_swirl(void) {
     state.animation_step = state.animation_step % HUE_MAX;
 }
 
+static void zmk_rgb_underglow_effect_stepper(void) {
+    int target = state.animation_step / 20;
+    bool moved = (state.animation_step == 0) || ((state.animation_step - 1) / 20) != target;
+    if (moved) {
+        for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+            struct zmk_led_hsb hsb = state.color;
+            if (i == target) {
+                hsb.h = sys_rand32_get();
+                hsb.b = 100;
+            } else {
+                hsb.b = 0;
+            }
+
+            pixels[i] = hsb_to_rgb(hsb_scale_min_max(hsb));
+        }
+    }
+
+    state.animation_step += state.animation_speed;
+    state.animation_step = state.animation_step % (STRIP_NUM_PIXELS * 20);
+}
+
+static bool breath_adj(int* cur_b, bool* inc) {
+    bool end = false;
+    if (*inc) {
+        if (*cur_b >= BRT_MAX) {
+            *inc = false;
+        } else {
+            *cur_b += state.animation_speed;
+            if (*cur_b > BRT_MAX) *cur_b = BRT_MAX;
+        }
+    }
+
+    if (!*inc) {
+        if (*cur_b <= 0) {
+            end = true;
+        } else {
+            *cur_b -= state.animation_speed * 2;
+            if (*cur_b < 0) *cur_b = 0;
+        }
+    }
+    return end;
+}
+
+static void zmk_rgb_underglow_effect_neon(void) {
+    static bool new_pixels = true;
+    static bool pixels_chosen[STRIP_NUM_PIXELS];
+    static int cur_h[STRIP_NUM_PIXELS];
+    static int cur_b = 0;
+    static bool inc = true;
+
+    if (new_pixels) {
+        memset(pixels_chosen, 0, sizeof(pixels_chosen));
+        for (int i = 0; i < 18; ++i) {
+            int pixel;
+            do {
+                pixel = sys_rand32_get() % STRIP_NUM_PIXELS;
+            } while (pixels_chosen[pixel]);
+            pixels_chosen[pixel] = true;
+            cur_h[pixel] = sys_rand32_get() % HUE_MAX;
+        }
+        cur_b = 0;
+        inc = true;
+        new_pixels = false;
+    }
+
+    struct zmk_led_hsb hsb = state.color;
+    hsb.b = cur_b;
+
+    new_pixels = breath_adj(&cur_b, &inc);
+
+    static const struct led_rgb blank = {};
+    for (int i = 0; i < STRIP_NUM_PIXELS; ++i) {
+        if (pixels_chosen[i]) {
+            hsb.h = cur_h[i];
+            pixels[i] = hsb_to_rgb(hsb_scale_min_max(hsb));
+        } else {
+            pixels[i] = blank;
+        }
+    }
+
+    state.animation_step += state.animation_speed;
+    state.animation_step = state.animation_step % (STRIP_NUM_PIXELS * 20);
+}
+
+static void zmk_rgb_underglow_effect_starlight(void) {
+    static bool new_pixels = true;
+    static bool pixels_chosen[STRIP_NUM_PIXELS];
+    static int cur_h[STRIP_NUM_PIXELS];
+    static int cur_b[STRIP_NUM_PIXELS];
+    static bool inc[STRIP_NUM_PIXELS];
+    static int on_pixels = 0;
+
+    if (new_pixels) {
+        int remains = STRIP_NUM_PIXELS - on_pixels;
+        if (remains > 0) {
+            int index = sys_rand32_get() % remains;
+            int count = 0;
+            int selected = -1;
+            for (int i = 0; i < STRIP_NUM_PIXELS; ++i) {
+                if (pixels_chosen[i]) continue;
+                if (count >= index) {
+                    selected = i;
+                    break;
+                }
+                ++count;
+            }
+            if (selected != -1) {
+                pixels_chosen[selected] = true;
+                cur_h[selected] = sys_rand32_get() % HUE_MAX;
+                cur_b[selected] = 0;
+                inc[selected] = true;
+            }
+        }
+        new_pixels = false;
+    }
+
+    static const struct led_rgb blank = {};
+    for (int i = 0; i < STRIP_NUM_PIXELS; ++i) {
+        if (pixels_chosen[i]) {
+            struct zmk_led_hsb hsb = state.color;
+            hsb.b = cur_b[i];
+
+            pixels_chosen[i] = !breath_adj(&cur_b[i], &inc[i]);
+
+            hsb.h = cur_h[i];
+            pixels[i] = hsb_to_rgb(hsb_scale_min_max(hsb));
+        } else {
+            pixels[i] = blank;
+        }
+    }
+
+    state.animation_step += state.animation_speed * (sys_rand32_get() % (state.color.h / 10 + 1));
+    if (state.animation_step > 100) {
+        state.animation_step = 0;
+        new_pixels = true;
+    }
+}
+
 static void zmk_rgb_underglow_tick(struct k_work *work) {
     switch (state.current_effect) {
     case UNDERGLOW_EFFECT_SOLID:
@@ -198,6 +340,15 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
         break;
     case UNDERGLOW_EFFECT_SWIRL:
         zmk_rgb_underglow_effect_swirl();
+        break;
+    case UNDERGLOW_EFFECT_STEPPER:
+        zmk_rgb_underglow_effect_stepper();
+        break;
+    case UNDERGLOW_EFFECT_NEON:
+        zmk_rgb_underglow_effect_neon();
+        break;
+    case UNDERGLOW_EFFECT_STARLIGHT:
+        zmk_rgb_underglow_effect_starlight();
         break;
     }
 
